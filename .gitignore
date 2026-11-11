@@ -1,2 +1,4 @@
 .agent
 .env
+.gitignore
+__pycache__
