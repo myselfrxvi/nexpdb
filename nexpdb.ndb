@@ -1,4 +1,0 @@
-{"op": "set", "key": "__schema__:users", "val": {"id": "INT", "name": "TEXT"}}
-{"op": "set", "key": "row:users:27f08211d4d5", "val": {"id": 1, "name": "Alice"}}
-{"op": "set", "key": "row:users:d0aca1e6029d", "val": {"id": 2, "name": "Bob"}}
-{"op": "del", "key": "row:users:d0aca1e6029d"}
