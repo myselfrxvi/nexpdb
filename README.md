@@ -1,145 +1,183 @@
-# NexpDB
+# NexpDB 💾
 
-A lightweight, append-only database built from scratch in Python. Think of it as a mini Redis meets SQLite, but simpler and educational.
+> **"How does a database actually work when you don't use SQLite or external libraries?"**  
+> I had no idea, so I built one from scratch in pure Python.
 
-## What is this?
-
-NexpDB is a key-value database that stores data in an append-only log file. It's designed to be easy to understand while demonstrating real database concepts like write-ahead logging, crash recovery, and in-memory indexing.
-
-## Key Features
-
-- **Append-only storage**: All writes go to the end of a log file, making it crash-safe and easy to reason about
-- **In-memory indexing**: Fast O(1) lookups using byte offsets instead of scanning the entire file
-- **Crash recovery**: Automatically rebuilds the index from disk when restarting
-- **Table support**: Named tables with typed schemas (work in progress)
-- **Pure Python**: No external dependencies, just the standard library
-
-## How it works
-
-NexpDB uses a simple but clever architecture:
-
-1. **Write path**: Every operation (set, delete) appends a JSON line to the log file
-2. **Index**: An in-memory dictionary maps keys to their byte offset in the file
-3. **Read path**: Look up the offset, seek to that position, and read the value
-4. **Recovery**: On startup, replay the entire log to rebuild the index
-
-The newest record for any key always wins, so updates just append new records rather than modifying the file.
-
-## Usage
-
-### Basic key-value operations
-
-```python
-from storage import StorageEngine
-
-# Create or open a database
-db = StorageEngine("my_data.ndb")
-
-# Store data
-db.set("user:1", {"name": "Alice", "age": 30})
-db.set("config:theme", "dark")
-
-# Retrieve data
-user = db.get("user:1")  # {"name": "Alice", "age": 30}
-
-# Update (just appends a new record)
-db.set("user:1", {"name": "Alice", "age": 31})
-
-# Delete
-db.delete("user:1")
-
-# List all keys
-all_keys = db.keys()
-```
-
-### Working with tables (in development)
-
-```python
-from storage import StorageEngine
-from tables import TableManager
-
-db = StorageEngine("my_data.ndb")
-tables = TableManager(db)
-
-# Create a typed table
-tables.create_table("users", {
-    "id": "INT",
-    "name": "TEXT"
-})
-
-# Insert rows
-tables.insert("users", {"id": 1, "name": "Alice"})
-```
-
-## Running the tests
-
-The storage engine includes built-in tests:
-
-```bash
-python storage.py
-```
-
-You should see: `ALL STORAGE TESTS PASSED!`
-
-## Project Status
-
-**What works:**
-- ✅ Append-only storage engine
-- ✅ In-memory indexing
-- ✅ Crash recovery
-- ✅ Basic CRUD operations
-
-**In progress:**
-- 🚧 Table manager with schemas
-- 🚧 Type validation
-- 🚧 Query support
-
-## Why build this?
-
-This project is a learning exercise in database internals. By implementing storage from scratch, you learn:
-
-- How databases achieve durability
-- Why append-only logs are simpler than in-place updates
-- How indexing makes lookups fast
-- What happens during crash recovery
-
-## Technical Details
-
-### File Format
-
-Each line in the `.ndb` file is a JSON record:
-
-```json
-{"op": "set", "key": "user:1", "val": {"name": "Alice", "age": 30}}
-{"op": "del", "key": "user:2"}
-```
-
-### Performance Characteristics
-
-- **Writes**: O(1) - append to end of file
-- **Reads**: O(1) - direct byte offset seek
-- **Deletes**: O(1) - append tombstone record
-- **Startup**: O(n) - must replay entire log
-- **Space**: Grows indefinitely (no compaction yet)
-
-### Limitations
-
-This is an educational project, not production-ready:
-
-- No concurrency control (single-threaded only)
-- No compaction (deleted records stay in the file)
-- No transactions
-- Limited query capabilities
-- No network protocol
-
-## License
-
-MIT - feel free to learn from, modify, and share this code.
-
-## Contributing
-
-This is a learning project, but suggestions and improvements are welcome! Open an issue or submit a PR.
+NexpDB is a relational SQL database engine written with zero third-party dependencies. It combines a **Bitcask-style append-only storage engine** on disk with a **hand-written SQL lexer, parser, and interactive REPL**.
 
 ---
 
-Built to understand how databases work under the hood 🔍
+## ⚡ Quick Demo
+
+Start the database shell:
+
+```powershell
+python nexpdb.py
+```
+
+Then write real SQL:
+
+```text
+Connected to NexpDB (nexpdb.ndb). Type SQL or .exit to quit.
+
+nexpdb> CREATE TABLE users (id INT, name TEXT);
+Table 'users' created.
+
+nexpdb> INSERT INTO users VALUES (1, 'Alice');
+1 row inserted.
+
+nexpdb> INSERT INTO users VALUES (2, 'Bob');
+1 row inserted.
+
+nexpdb> SELECT * FROM users;
++----+-------+
+| id | name  |
++----+-------+
+| 1  | Alice |
+| 2  | Bob   |
++----+-------+
+2 row(s) in set.
+
+nexpdb> DELETE FROM users WHERE id = 2;
+1 row(s) deleted
+
+nexpdb> SELECT * FROM users;
++----+-------+
+| id | name  |
++----+-------+
+| 1  | Alice |
++----+-------+
+1 row(s) in set.
+
+nexpdb> .tables
+Tables: users
+
+nexpdb> .exit
+Bye!
+```
+
+Shutdown your terminal, reopen it, and run `SELECT * FROM users;` again—your data is still there.
+
+---
+
+## 🧠 How It Works Under The Hood
+
+NexpDB is built in 4 clean, decoupled layers:
+
+```text
+  SQL String: "SELECT name FROM users WHERE id = 1;"
+                          │
+                          ▼
+             ┌─────────────────────────┐
+             │ 1. Lexer & Parser       │  Chops text into tokens & builds AST
+             │    (parser.py)          │  (SelectStmt, InsertStmt, etc.)
+             └────────────┬────────────┘
+                          ▼
+             ┌─────────────────────────┐
+             │ 2. Executor & REPL      │  Interactive terminal + routes AST
+             │    (nexpdb.py)          │  to the TableManager
+             └────────────┬────────────┘
+                          ▼
+             ┌─────────────────────────┐
+             │ 3. Table & Schema Layer │  Enforces typed schemas (INT, TEXT)
+             │    (tables.py)          │  and namespaces rows
+             └────────────┬────────────┘
+                          ▼
+             ┌─────────────────────────┐
+             │ 4. Storage Engine       │  Append-only binary log + in-memory
+             │    (storage.py)         │  byte-offset index
+             └────────────┬────────────┘
+                          ▼
+                    Disk: nexpdb.ndb
+```
+
+---
+
+### Layer 1: The Append-Only Log (`storage.py`)
+Most beginners assume databases open a file, find line 4, and edit `"Alice"` to `"Alicia"`. **Databases don't do that.**
+
+Editing in the middle of a file means shifting thousands of bytes and risks corrupting everything if power cuts out mid-write. 
+
+Instead, NexpDB treats the file like an accounting ledger in permanent ink:
+- **Writes are append-only:** Every `SET` or `DELETE` simply appends one new line to the bottom of `nexpdb.ndb`.
+- **In-memory Table of Contents:** Scanning a huge file for every read would be slow. When the engine boots up, it reads the log once and remembers `{key: byte_offset}` in RAM. Looking up any key takes `O(1)`: seek straight to that byte offset and read that single record.
+- **Tombstones:** To delete a key without erasing past bytes, we append a `{"op": "del", "key": ...}` tombstone. When replaying the file on restart, hitting a tombstone removes that key from the in-memory index.
+
+### Layer 2: Relational Tables & Schemas (`tables.py`)
+How do tables live inside a flat key-value store? **Key prefixes:**
+- Blueprints are stored under `"__schema__:<table_name>"` (e.g. `{"id": "INT", "name": "TEXT"}`).
+- Rows are saved as `"row:<table_name>:<uuid>"` (e.g. `{"id": 1, "name": "Alice"}`).
+- Type checking happens before anything touches disk—trying to insert text into an `INT` column throws an immediate error.
+
+### Layer 3: Hand-Written SQL Parser (`parser.py`)
+No `sqlparse` or third-party libraries.
+- **Tokenizer:** Walks the string character-by-character to properly separate symbols (`(`, `)`, `,`, `;`, `=`), negative numbers (`-5`), and quoted strings (`'Alice Smith'`).
+- **Parser:** Reads tokens sequentially to produce typed `@dataclass` commands:
+  - `CreateTableStmt(table, columns)`
+  - `InsertStmt(table, values)`
+  - `SelectStmt(table, columns, where)`
+  - `DeleteStmt(table, where)`
+
+### Layer 4: Executor & Terminal UI (`nexpdb.py`)
+- Translates parsed AST statements into table operations.
+- Dynamically calculates column widths and renders results into ASCII tables.
+- Implements a resilient interactive REPL loop with dot commands (`.tables`, `.exit`).
+
+---
+
+## 🔍 Peek Behind The Curtain: The Disk File
+
+Open `nexpdb.ndb` in Notepad or VS Code right now. You won't see magic or encrypted blobs; you will see the exact raw ledger of actions:
+
+```json
+{"op": "set", "key": "__schema__:users", "val": {"id": "INT", "name": "TEXT"}}
+{"op": "set", "key": "row:users:27f08211d4d5", "val": {"id": 1, "name": "Alice"}}
+{"op": "set", "key": "row:users:d0aca1e6029d", "val": {"id": 2, "name": "Bob"}}
+{"op": "del", "key": "row:users:d0aca1e6029d"}
+```
+
+Notice line 4? That's the **tombstone** deleting Bob. Bob's older row is still physically on disk, but the database knows he's gone!
+
+---
+
+## 🧪 Running The Verification Suites
+
+Each layer contains its own standalone, non-tautological test suite:
+
+```powershell
+# Test the append-only storage engine (offset seeks, restarts, tombstones)
+python storage.py
+
+# Test schema creation, type validation, table isolation, row queries
+python tables.py
+
+# Test tokenizer and SQL grammar parser
+python parser.py
+```
+
+All three will output:
+```text
+ALL STORAGE TESTS PASSED!
+ALL TABLE TESTS PASSED!
+ALL PARSER TESTS PASSED!
+```
+
+---
+
+## 💡 What I Learned Building This
+
+1. **Why databases love append-only logs:** Appends are fast, safe from partial-write corruption, and simple to reason about.
+2. **What an "Index" actually is:** It's not magic—it's just a Python dictionary in memory that remembers exact byte offsets so you can `f.seek()` instantly.
+3. **Compilers and Parsers aren't scary:** Splitting raw text into `Tokens` first makes parsing SQL grammar surprisingly straightforward.
+4. **Mechanical Sympathy:** Real software is about organizing bytes on a hard drive and moving them into memory efficiently.
+
+---
+
+## 🚀 What's Next?
+- [ ] **Log Compaction:** A background worker that merges `nexpdb.ndb` to clean out dead rows and tombstones to reclaim disk space.
+- [ ] **Secondary Indexes:** Adding a B-Tree or hash map on specific columns so `WHERE name = 'Alice'` doesn't require a full table scan.
+- [ ] **JOIN queries:** Joining two tables across foreign keys.
+
+---
+
+*Built manually from scratch in Python.*
